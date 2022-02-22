@@ -1,9 +1,9 @@
 kind: Pod
 apiVersion: v1
 metadata:
-  name: busybox-secrets-store-inline
+  name: busybox-vault
 spec:
-  serviceAccountName: webapp-sa
+  serviceAccountName: webapp-sa # This is the service account we created earlier that has permissions to Vault
   containers:
   - name: busybox
     image: k8s.gcr.io/e2e-test-images/busybox:1.29

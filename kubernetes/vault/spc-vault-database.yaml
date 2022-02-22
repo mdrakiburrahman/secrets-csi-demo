@@ -8,6 +8,6 @@ spec:
     vaultAddress: "http://vault.default:8200"
     roleName: "database"
     objects: |
-      - objectName: "db-password"
-        secretPath: "secret/data/db-pass"
+      - objectName: "db-pass-vault"
+        secretPath: "secret/data/db-pass-vault"
         secretKey: "password"
