@@ -1,0 +1,18 @@
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: akv-database
+spec:
+  provider: azure
+  parameters: # These are specific to the CSI provider
+    usePodIdentity: "false"
+    useVMManagedIdentity: "false"
+    userAssignedIdentityID: ""
+    keyvaultName: csiakvehgpb
+    objects: |
+      array:
+        - |
+          objectName: password # The secret we created in AKV above
+          objectType: secret
+          objectVersion: ""
+    tenantId: 72f988bf-86f1-41af-91ab-2d7cd011db47

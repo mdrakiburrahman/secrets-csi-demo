@@ -36,6 +36,41 @@ az account set --subscription $subscriptionId
 az aks get-credentials --resource-group $TF_VAR_resource_group_name --name $TF_VAR_aks_name
 
 ################################################
+# Install Secrets Store CSI drivers
+################################################
+# Helm repo settings: https://github.com/kubernetes-sigs/secrets-store-csi-driver/tree/main/charts/secrets-store-csi-driver#configuration
+
+# To clean install:
+kubectl delete -f pod.yaml --grace-period=0 --force
+kubectl delete -f spc-vault-database.yaml
+kubectl delete crd secretproviderclasses.secrets-store.csi.x-k8s.io
+kubectl delete crd secretproviderclasspodstatuses.secrets-store.csi.x-k8s.io
+helm uninstall csi
+helm repo remove csi-secrets-store-provider-azure
+
+#⭐ The Azure managed Helm chart is used on purpose, the other ones don't work with auto rotation for some reason - maybe because we keep ours up to date
+helm repo add csi-secrets-store-provider-azure https://raw.githubusercontent.com/Azure/secrets-store-csi-driver-provider-azure/master/charts
+
+# Install helm charts with 
+# 1. Auto rotation: https://secrets-store-csi-driver.sigs.k8s.io/topics/secret-auto-rotation.html?highlight=enableSecretRotation#enable-auto-rotation
+# 2. Auto rotation poll interval = 5s
+
+helm install csi csi-secrets-store-provider-azure/csi-secrets-store-provider-azure \
+            --set secrets-store-csi-driver.enableSecretRotation=true \
+            --set secrets-store-csi-driver.rotationPollInterval=5s
+
+# This runs as a daemonset
+# pod/csi-csi-secrets-store-provider-azure-9xvd7   1/1     Running   0          47s
+# pod/secrets-store-csi-driver-2mxbx               3/3     Running   0          47s
+
+################################################                                       
+# ____   _________   ____ ___.____  ___________
+# \   \ /   /  _  \ |    |   \    | \__    ___/
+#  \   Y   /  /_\  \|    |   /    |   |    |   
+#   \     /    |    \    |  /|    |___|    |   
+#    \___/\____|__  /______/ |_______ \____|   
+#                 \/                 \/                                                 
+################################################
 # Helm Charts for Vault
 ################################################
 # Add helm chart
@@ -88,7 +123,7 @@ kubectl get service vault-ui
 # http://20.102.22.165:8200/
 
 ################################################
-# Helm Charts for Vault pod and K8s auth
+# Configure Secrets and K8s auth
 ################################################
 # Create secret in Vault
 kubectl exec -it vault-0 -- /bin/sh
@@ -129,34 +164,6 @@ vault write auth/kubernetes/role/database \
 # This Kubernetes service account name, webapp-sa, will be created below.
 
 exit # exit from vault container
-
-################################################
-# Install Secrets Store CSI drivers
-################################################
-# Helm repo settings: https://github.com/kubernetes-sigs/secrets-store-csi-driver/tree/main/charts/secrets-store-csi-driver#configuration
-
-# To clean install:
-kubectl delete -f pod.yaml --grace-period=0 --force
-kubectl delete -f spc-vault-database.yaml
-kubectl delete crd secretproviderclasses.secrets-store.csi.x-k8s.io
-kubectl delete crd secretproviderclasspodstatuses.secrets-store.csi.x-k8s.io
-helm uninstall csi
-helm repo remove csi-secrets-store-provider-azure
-
-#⭐ The Azure managed Helm chart is used on purpose, the other ones don't work with auto rotation for some reason - maybe because we keep ours up to date
-helm repo add csi-secrets-store-provider-azure https://raw.githubusercontent.com/Azure/secrets-store-csi-driver-provider-azure/master/charts
-
-# Install helm charts with 
-# 1. Auto rotation: https://secrets-store-csi-driver.sigs.k8s.io/topics/secret-auto-rotation.html?highlight=enableSecretRotation#enable-auto-rotation
-# 2. Auto rotation poll interval = 5s
-
-helm install csi csi-secrets-store-provider-azure/csi-secrets-store-provider-azure \
-            --set secrets-store-csi-driver.enableSecretRotation=true \
-            --set secrets-store-csi-driver.rotationPollInterval=5s
-
-# This runs as a daemonset
-# pod/csi-csi-secrets-store-provider-azure-9xvd7   1/1     Running   0          47s
-# pod/secrets-store-csi-driver-2mxbx               3/3     Running   0          47s
 
 ################################################
 # Create a SecretProviderClass: Vault
@@ -310,3 +317,218 @@ kubectl get secretproviderclasspodstatus busybox-vault-default-vault-database -o
 #   targetPath: /var/lib/kubelet/pods/212d7b8b-55ce-42e3-9ea2-95219c576a7d/volumes/kubernetes.io~csi/secrets-store-inline/mount
 
 # Issue is being tracked here: https://github.com/hashicorp/vault-csi-provider/issues/146
+
+################################################
+#    _____   ____  __.____   ____
+#   /  _  \ |    |/ _|\   \ /   /
+#  /  /_\  \|      <   \   Y   / 
+# /    |    \    |  \   \     /  
+# \____|__  /____|__ \   \___/   
+#         \/        \/                                                 
+################################################
+# Configure Secrets and K8s secret for SP Auth
+################################################
+KEYVAULT_NAME='csiakvehgpb' # <---- Update this to your keyvault name
+# Add a Secret
+az keyvault secret set \
+  --vault-name $KEYVAULT_NAME \
+  --name password \
+  --value "ThisIsAzure"
+
+# {
+#   "attributes": {
+#     "created": "2022-02-22T02:00:03+00:00",
+#     "enabled": true,
+#     "expires": null,
+#     "notBefore": null,
+#     "recoveryLevel": "CustomizedRecoverable+Purgeable",
+#     "updated": "2022-02-22T02:00:03+00:00"
+#   },
+#   "contentType": null,
+#   "id": "https://csiakvehgpb.vault.azure.net/secrets/password/bfd16f0def7d46deb7a81c4d74f19b94",
+#   "kid": null,
+#   "managed": null,
+#   "name": "password",
+#   "tags": {
+#     "file-encoding": "utf-8"
+#   },
+#   "value": "ThisIsAzure"
+# }
+
+# Get the latest secret
+az keyvault secret show --name password \
+                        --subscription $subscriptionId \
+                        --vault-name $KEYVAULT_NAME \
+
+# Same output as above
+
+# Gets the specific version
+#                       --version "bfd16f0def7d46deb7a81c4d74f19b94"
+
+# Create K8s secret with our SP creds from Env Vars
+kubectl create secret generic akv-creds \
+                --from-literal clientid=$spnClientId \
+                --from-literal clientsecret=$spnClientSecret
+
+# Label secret for AKV CSI provider to use
+kubectl label secret akv-creds secrets-store.csi.k8s.io/used=true
+
+################################################
+# Create a SecretProviderClass: AKV
+################################################
+cd ../akv
+
+cat > spc-akv-database.yaml <<EOF
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: akv-database
+spec:
+  provider: azure
+  parameters: # These are specific to the CSI provider
+    usePodIdentity: "false"
+    useVMManagedIdentity: "false"
+    userAssignedIdentityID: ""
+    keyvaultName: $KEYVAULT_NAME
+    objects: |
+      array:
+        - |
+          objectName: password # The secret we created in AKV above
+          objectType: secret
+          objectVersion: ""
+    tenantId: $spnTenantId
+EOF
+
+kubectl apply -f spc-akv-database.yaml
+
+# Check
+kubectl get SecretProviderClass
+# NAME             AGE
+# akv-database     3s
+# vault-database   39m
+
+################################################
+# Create a pod with secret mounted
+################################################
+# Pod
+cat > pod.yaml <<EOF
+kind: Pod
+apiVersion: v1
+metadata:
+  name: busybox-akv
+spec:
+  containers:
+  - name: busybox
+    image: k8s.gcr.io/e2e-test-images/busybox:1.29
+    command:
+      - "/bin/sleep"
+      - "10000"
+    volumeMounts:
+    - name: secrets-store-inline
+      mountPath: "/mnt/secrets-store"
+      readOnly: true
+  volumes:
+    - name: secrets-store-inline
+      csi:
+        driver: secrets-store.csi.k8s.io
+        readOnly: true
+        volumeAttributes:
+          secretProviderClass: "akv-database"
+        nodePublishSecretRef:                       # Only required when using service principal mode
+          name: akv-creds                           # Only required when using service principal mode
+EOF
+
+# Create the pod
+kubectl apply -f pod.yaml
+
+# Read secret from pod
+kubectl exec busybox-akv -- cat /mnt/secrets-store/password
+# ThisIsAzure
+
+################################################
+# Secret version
+################################################
+# Get Secret Version 1
+kubectl get secretproviderclasspodstatus busybox-akv-default-akv-database -o yaml
+# apiVersion: secrets-store.csi.x-k8s.io/v1
+# kind: SecretProviderClassPodStatus
+# metadata:
+#   creationTimestamp: "2022-02-22T02:16:25Z"
+#   generation: 1
+#   labels:
+#     internal.secrets-store.csi.k8s.io/node-name: aks-agentpool-58140103-vmss000000
+#   name: busybox-akv-default-akv-database
+#   namespace: default
+#   ownerReferences:
+#   - apiVersion: v1
+#     kind: Pod
+#     name: busybox-akv
+#     uid: 8b0d3338-e321-4816-993a-c2067f1ff8f8
+#   resourceVersion: "21895"
+#   uid: 4bd04d0e-37fe-4352-ab57-d3c95f9a3d8d
+# status:
+#   mounted: true
+#   objects:
+#   - id: secret/password
+#     version: bfd16f0def7d46deb7a81c4d74f19b94                       <---------- Same version as AKV
+#   podName: busybox-akv
+#   secretProviderClassName: akv-database
+#   targetPath: /var/lib/kubelet/pods/8b0d3338-e321-4816-993a-c2067f1ff8f8/volumes/kubernetes.io~csi/secrets-store-inline/mount
+
+# Update secret in Azure
+az keyvault secret set \
+  --vault-name $KEYVAULT_NAME \
+  --name password \
+  --value "ThisIsAzure2"
+# {
+#   "attributes": {
+#     "created": "2022-02-22T02:19:12+00:00",
+#     "enabled": true,
+#     "expires": null,
+#     "notBefore": null,
+#     "recoveryLevel": "CustomizedRecoverable+Purgeable",
+#     "updated": "2022-02-22T02:19:12+00:00"
+#   },
+#   "contentType": null,
+#   "id": "https://csiakvehgpb.vault.azure.net/secrets/password/f7165a23cf4544f9bddf4b8f2f017112",      <---------- New version
+#   "kid": null,
+#   "managed": null,
+#   "name": "password",
+#   "tags": {
+#     "file-encoding": "utf-8"
+#   },
+#   "value": "ThisIsAzure2"
+# }
+
+# Read secret from pod
+kubectl exec busybox-akv -- cat /mnt/secrets-store/password
+# ThisIsAzure2
+
+# Get Secret Version 2
+kubectl get secretproviderclasspodstatus busybox-akv-default-akv-database -o yaml
+# apiVersion: secrets-store.csi.x-k8s.io/v1
+# kind: SecretProviderClassPodStatus
+# metadata:
+#   creationTimestamp: "2022-02-22T02:16:25Z"
+#   generation: 2
+#   labels:
+#     internal.secrets-store.csi.k8s.io/node-name: aks-agentpool-58140103-vmss000000
+#   name: busybox-akv-default-akv-database
+#   namespace: default
+#   ownerReferences:
+#   - apiVersion: v1
+#     kind: Pod
+#     name: busybox-akv
+#     uid: 8b0d3338-e321-4816-993a-c2067f1ff8f8
+#   resourceVersion: "22439"
+#   uid: 4bd04d0e-37fe-4352-ab57-d3c95f9a3d8d
+# status:
+#   mounted: true
+#   objects:
+#   - id: secret/password
+#     version: f7165a23cf4544f9bddf4b8f2f017112                      <---------- New version                  
+#   podName: busybox-akv
+#   secretProviderClassName: akv-database
+#   targetPath: /var/lib/kubelet/pods/8b0d3338-e321-4816-993a-c2067f1ff8f8/volumes/kubernetes.io~csi/secrets-store-inline/mount
+
+# As desired
